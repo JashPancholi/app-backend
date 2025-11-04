@@ -1,5 +1,5 @@
-from flask import Blueprint, request
-from operator import itemgetter
+from fastapi import APIRouter, Depends, Header, Query
+from sqlalchemy.orm import Session
 from controllers.admin_controller import (
     auth_middleware,
     get_all_users, 
@@ -8,45 +8,39 @@ from controllers.admin_controller import (
     remove_user,
     change_user_role
 )
+from db import get_db
 
-admin_routes = Blueprint('admin_routes', __name__)
+admin_router = APIRouter()
 
-@admin_routes.before_request
-def check_auth():
-    auth = auth_middleware(request.headers.get('TOKEN'))
-    if auth:
-        return auth
+async def verify_admin_token(token: str = Header(None, alias="TOKEN")):
+    return auth_middleware(token)
 
-@admin_routes.route('/users', methods=['GET'])
-def get_all_users_route():
-    sort_order = request.args.get("sort", "ascending")
-    users = get_all_users()
-    if sort_order == "descending":
-        users.sort(key=itemgetter("credits"), reverse=True)
+@admin_router.get('/users', dependencies=[Depends(verify_admin_token)])
+async def get_all_users_route(sort: str = Query(default="ascending"), db: Session = Depends(get_db)):
+    users = await get_all_users(db)
+    if sort == "descending":
+        users.sort(key=lambda x: x["credits"], reverse=True)
     else:
-        users.sort(key=itemgetter("credits"))
+        users.sort(key=lambda x: x["credits"])
     return users
 
-@admin_routes.route('/points/update', methods=['PUT'])
-def update_user_points_route():
-    data = request.json
-    user_id = data.get('user_id')
-    points = data.get('points')
-    return update_user_points(user_id, points)
+@admin_router.put('/points/update', dependencies=[Depends(verify_admin_token)])
+async def update_user_points_route(points_data: dict, db: Session = Depends(get_db)):
+    user_id = points_data.get('user_id')
+    points = points_data.get('points')
+    return await update_user_points(user_id, points, db)
 
-@admin_routes.route('/users/add', methods=['POST'])
-def add_user_route():
-    data = request.json
-    return add_user(data)
+@admin_router.post('/users/add', dependencies=[Depends(verify_admin_token)])
+async def add_user_route(user_data: dict, db: Session = Depends(get_db)):
+    return await add_user(user_data, db)
 
-@admin_routes.route('/users/<string:user_id>', methods=['DELETE'])
-def remove_user_route(user_id):
-    return remove_user(user_id)
+@admin_router.delete('/users/{user_id}', dependencies=[Depends(verify_admin_token)])
+async def remove_user_route(user_id: str, db: Session = Depends(get_db)):
+    return await remove_user(user_id, db)
 
-@admin_routes.route('/users/role', methods=['PUT'])
-def change_role_route():
-    data = request.json
-    admin_id = data.get('admin_id')
-    target_user_id = data.get('user_id')
-    new_role = data.get('role')
-    return change_user_role(admin_id, target_user_id, new_role)
+@admin_router.put('/users/role', dependencies=[Depends(verify_admin_token)])
+async def change_role_route(role_data: dict, db: Session = Depends(get_db)):
+    admin_id = role_data.get('admin_id')
+    target_user_id = role_data.get('user_id')
+    new_role = role_data.get('role')
+    return await change_user_role(admin_id, target_user_id, new_role, db)

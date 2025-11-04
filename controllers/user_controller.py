@@ -1,44 +1,43 @@
-from flask import request, jsonify
-from db import get_document_reference, get_collection_reference
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 from models.user_model import User
+from models.database import UserDB
 
 def validate_contact_info(email, phone_number):
     if not email and not phone_number:
         return False, "At least one of email or phone_number is required."
     return True, ""
 
-def add_user():
+async def add_user(user_data: dict, db: Session):
     try:
-        data = request.json
-        first_name = data.get('first_name')
-        last_name = data.get('last_name')
-        email = data.get('email')
-        phone_number = data.get('phone_number')
+        first_name = user_data.get('first_name')
+        last_name = user_data.get('last_name')
+        email = user_data.get('email')
+        phone_number = user_data.get('phone_number')
         user_points = 0
-        referral_code = data.get('referral_code', None)
+        referral_code = user_data.get('referral_code', None)
 
-        # Validate that at least one of email or phone_number is provided
+        # validate that at least one of email or phone_number is provided
         is_valid, error_message = validate_contact_info(email, phone_number)
         if not is_valid:
-            return {"error": error_message}, 400
+            raise HTTPException(status_code=400, detail=error_message)
 
         if referral_code:
-            db = get_collection_reference('users')
-            referrer = db.where(field_path='referral_code', op_string='==', value=referral_code).get()
-            if len(referrer) <= 0:
-                return {"error": "Referral code invalid"}, 400
+            referrer = db.query(UserDB).filter(UserDB.referral_code == referral_code).first()
+            if not referrer:
+                raise HTTPException(status_code=400, detail="Referral code invalid")
             
-            referrer_id = referrer[0].id  # Get referrer's ID
+            referrer_id = referrer.unique_id
             user_points += 20
             
-            # Create new user with referrer's ID
+            # create new user with referrer's ID
             newUser = User(
                 first_name=first_name,
                 last_name=last_name,
                 email=email,
                 phone_number=phone_number,
                 credits=user_points,
-                referred_by=[referrer_id]  # Store only referrer's ID
+                referred_by=[referrer_id]
             )
         else:
             newUser = User(
@@ -49,64 +48,70 @@ def add_user():
                 credits=user_points,
                 referred_by=[]
             )
-        newUser.save()
+        newUser.save(db)
 
-        return {"message": "User added successfully", "user": newUser.to_dict()}, 201
+        return {"message": "User added successfully", "user": newUser.to_dict()}
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}, 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def update_profile():
+async def update_profile(user_data: dict, db: Session):
     try:
-        data = request.json
-        unique_id = data.get('unique_id')
+        unique_id = user_data.get('unique_id')
 
-        # Retrieve user from database
-        user = User.get_by_id(unique_id)
+        # retrieve user from database
+        user = User.get_by_id(unique_id, db)
         if not user:
-            return jsonify({"error": "User not found"}), 404
+            raise HTTPException(status_code=404, detail="User not found")
 
-        # Validate that at least one of email or phone_number is provided
-        email = data.get('email', user.email)
-        phone_number = data.get('phone_number', user.phone_number)
+        # validate that at least one of email or phone_number is provided
+        email = user_data.get('email', user.email)
+        phone_number = user_data.get('phone_number', user.phone_number)
         is_valid, error_message = validate_contact_info(email, phone_number)
         if not is_valid:
-            return jsonify({"error": error_message}), 400
+            raise HTTPException(status_code=400, detail=error_message)
 
-        # Update fields
-        user.first_name = data.get('first_name', user.first_name)
-        user.last_name = data.get('last_name', user.last_name)
+        # update fields
+        user.first_name = user_data.get('first_name', user.first_name)
+        user.last_name = user_data.get('last_name', user.last_name)
         user.email = email
         user.phone_number = phone_number
 
-        # Save updated user
-        user.save()
+        # save updated user
+        user.save(db)
 
-        return jsonify({"message": "User profile updated successfully", "user": user.to_dict()}), 200
+        return {"message": "User profile updated successfully", "user": user.to_dict()}
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def delete_profile():
+async def delete_profile(user_data: dict, db: Session):
     try:
-        data = request.json
-        unique_id = data.get('unique_id')
-        user = User.get_by_id(unique_id)
+        unique_id = user_data.get('unique_id')
+        user = User.get_by_id(unique_id, db)
         if not user:
-            return jsonify({"error": "User not found"}), 404
+            raise HTTPException(status_code=404, detail="User not found")
         
         # Delete user from database
-        user_ref = get_document_reference('users', unique_id)
-        user_ref.delete()
+        db.query(UserDB).filter(UserDB.unique_id == unique_id).delete()
+        db.commit()
 
-        return jsonify({"message": "User profile deleted successfully"}), 200
+        return {"message": "User profile deleted successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def get_profile(unique_id):
+async def get_profile(unique_id: str, db: Session):
     try:
-        user = User.get_by_id(unique_id)
+        user = User.get_by_id(unique_id, db)
         if user:
-            return jsonify({"user": user.to_dict()}), 200
+            return {"user": user.to_dict()}
         else:
-            return jsonify({"error": "User not found"}), 404
+            raise HTTPException(status_code=404, detail="User not found")
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        raise HTTPException(status_code=400, detail=str(e))

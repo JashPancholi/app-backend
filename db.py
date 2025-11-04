@@ -1,37 +1,42 @@
 import os
-from dotenv import load_dotenv, dotenv_values
-import firebase_admin
-from firebase_admin import credentials, firestore
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from contextlib import contextmanager
 
 # Load environment variables from .env file
 load_dotenv(dotenv_path=".env", override=True)
 
-# Initialize Firebase Admin SDK if not already initialized
-if not firebase_admin._apps:
-    # Firebase credentials loaded from environment variables
-    firebase_credentials = {
-        "type": "service_account",
-        "project_id": os.getenv("FIREBASE_PROJECT_ID"),
-        "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-        "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace("\\n", "\n"),  # Ensure correct private key format
-        "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-        "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-        "auth_uri": os.getenv("FIREBASE_AUTH_URI"),
-        "token_uri": os.getenv("FIREBASE_TOKEN_URI"),
-        "auth_provider_x509_cert_url": os.getenv("FIREBASE_AUTH_PROVIDER_X509_CERT_URL"),
-        "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_X509_CERT_URL"),
-        "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN")
-    }
+# Get database URL from environment variables
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set")
 
-    # Initialize Firebase using the environment variables directly
-    cred = credentials.Certificate(firebase_credentials)
-    firebase_admin.initialize_app(cred)
+# Create SQLAlchemy engine
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
 
-# Global Firestore client
-db = firestore.client()
+# Create SessionLocal class
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-def get_collection_reference(collection_name):
-    return db.collection(collection_name)
+def get_db() -> Session:
+    """
+    Dependency function that provides a database session.
+    Use this with FastAPI's Depends() for automatic session management.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-def get_document_reference(collection_name, document_id):
-    return db.collection(collection_name).document(document_id)
+@contextmanager
+def get_db_context():
+    """
+    Context manager for database sessions.
+    Use this for non-FastAPI contexts (scripts, utilities, etc.)
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

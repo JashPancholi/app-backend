@@ -1,90 +1,110 @@
-from firebase_admin import auth, firestore
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 from models.role_model import Role
 from models.user_model import User
-from db import get_document_reference
+from models.database import UserDB
 import base64
 import os
-from flask import jsonify
 
-def auth_middleware(token):
+def auth_middleware(token: str):
     if not token:
-        return jsonify({"error": "Unauthorized: Token key not provided"}), 401
+        raise HTTPException(status_code=401, detail="Unauthorized: Token key not provided")
 
     token = base64.b64decode(token).decode('utf-8')
     
     if token != os.getenv('ADMIN_PASSWORD'):
-        return jsonify({"error": "Unauthorized: Invalid Credentials"}), 401
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid Credentials")
 
-def get_all_users():
+async def get_all_users(db: Session):
     try:
-        users = auth.list_users().users
+        users = db.query(UserDB).all()
         user_list = []
-        for firebase_user in users:
-            user_id = firebase_user.uid
-            user_ref = get_document_reference('users', user_id)
-            user_data = user_ref.get()
-            if user_data.exists:
-                user_dict = user_data.to_dict()
-                user_list.append({
-                    "unique_id": user_data.id,
-                    "name": user_dict.get("name"),
-                    "credits": user_dict.get("credits"),
-                })
-        return {"users": user_list}, 200
+        for user in users:
+            user_list.append({
+                "unique_id": user.unique_id,
+                "name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
+                "credits": user.credits or 0,
+            })
+        return user_list
     except Exception as e:
-        return {"error": str(e)}, 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def update_user_points(user_id, points):
+async def update_user_points(user_id: str, points: int, db: Session):
     try:
-        user_ref = get_document_reference('users', user_id)
-        user_ref.update({"credits": firestore.Increment(points)})
-        return {"message": "User points updated successfully"}, 200
-    except Exception as e:
-        return {"error": str(e)}, 400
-
-def add_user(user_id, user_name, user_points=0):
-    try:
-        user_ref = get_document_reference('users', user_id)
-        user_ref.set({
-            "name": user_name,
-            "credits": user_points
-        })
-        return {"message": "User added successfully"}, 201
-    except Exception as e:
-        return {"error": str(e)}, 400
-
-def remove_user(user_id):
-    try:
-        user_ref = get_document_reference('users', user_id)
-        user_ref.delete()
-        return {"message": "User removed successfully"}, 200
-    except Exception as e:
-        return {"error": str(e)}, 400
-
-def change_user_role(admin_id,target_user_id, new_role):
-    try:
-        admin_user=User.get_by_id(admin_id)
-        if not admin_user or admin_user.role != Role.ADMIN:
-            return {"error": "Unauthorized"}, 403
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
         
-        target_user = User.get_by_id(target_user_id)
+        user.credits += points
+        db.commit()
+        return {"message": "User points updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+async def add_user(user_data: dict, db: Session):
+    try:
+        user_id = user_data.get('user_id')
+        user_name = user_data.get('user_name')
+        user_points = user_data.get('user_points', 0)
+        
+        # Parse name into first and last
+        name_parts = user_name.split(' ', 1) if user_name else ['', '']
+        first_name = name_parts[0]
+        last_name = name_parts[1] if len(name_parts) > 1 else ''
+        
+        new_user = User(
+            unique_id=user_id,
+            first_name=first_name,
+            last_name=last_name,
+            credits=user_points
+        )
+        new_user.save(db)
+        return {"message": "User added successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+async def remove_user(user_id: str, db: Session):
+    try:
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        db.delete(user)
+        db.commit()
+        return {"message": "User removed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+async def change_user_role(admin_id: str, target_user_id: str, new_role: str, db: Session):
+    try:
+        admin_user = User.get_by_id(admin_id, db)
+        if not admin_user or admin_user.role != Role.ADMIN:
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        
+        target_user = User.get_by_id(target_user_id, db)
         if not target_user:
-            return {"error": "User not found"}, 404
+            raise HTTPException(status_code=404, detail="User not found")
         
         try:
             new_role_enum = Role(new_role.upper())
-        except KeyError:
-            return{"error": "Invalid role"}, 400
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid role")
         
-        user_ref = get_document_reference('users', target_user_id)
-        user_ref.update({"role": new_role_enum.value})
+        db_user = db.query(UserDB).filter(UserDB.unique_id == target_user_id).first()
+        db_user.role = new_role_enum.value
+        db.commit()
+        
         return {
             "message": f"User role updated to {new_role} successfully",
             "user": {
                 "id": target_user_id,
                 "role": new_role_enum.value
             }
-        },200
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}, 400
+        raise HTTPException(status_code=400, detail=str(e))
     

@@ -1,47 +1,46 @@
-from flask import jsonify, render_template, redirect, request
-from dotenv import load_dotenv
-from db import get_collection_reference
+from fastapi import Request, HTTPException
+from fastapi.responses import RedirectResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+from models.database import UserDB
 from controllers.admin_controller import add_user
 from models.user_model import User
+from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-db = get_collection_reference('users')
+templates = Jinja2Templates(directory="templates")
 
-def home():
+async def home(request: Request, db: Session):
     sort_by = "default"
-    if request.method == "POST":
-        sort_by = request.form.get("sortbtn")
-        # Redirect with sort parameter
-        return redirect(f"{os.getenv('ADMIN_PORTAL')}?sort={sort_by}")
     
-    # Get sort from query parameter if GET request
-    sort_by = request.args.get('sort', 'default')
-    
-    user_list = db
-    users = []
-    for doc in user_list.stream():
-        user_data = doc.to_dict()
-        user_data['id'] = doc.id
-        user_data['name'] = f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip()
-        user_data['credits'] = user_data.get('credits', 0)
-        user_data['role'] = user_data.get('role', 'User')
-        users.append(user_data)
+    users = db.query(UserDB).all()
+    user_list = []
+    for user in users:
+        user_data = {
+            'id': user.unique_id,
+            'name': f"{user.first_name or ''} {user.last_name or ''}".strip(),
+            'credits': user.credits or 0,
+            'role': user.role or 'User'
+        }
+        user_list.append(user_data)
 
     if sort_by != "default":
-        users = [user for user in users if user["role"] == sort_by]
-    return render_template("HomePage.html", users=users)
+        user_list = [user for user in user_list if user["role"] == sort_by]
+    
+    return templates.TemplateResponse("HomePage.html", {"request": request, "users": user_list})
 
-def add_user_logic(data):
+async def add_user_logic(user_data: dict, db: Session):
     try:
-        first_name= data.get('first_name')
-        last_name= data.get('last_name')
-        email= data.get('email')
-        phone_number= data.get('phone_number')
-        user_points= int(data.get('user_points', 0))
+        first_name = user_data.get('first_name')
+        last_name = user_data.get('last_name')
+        email = user_data.get('email')
+        phone_number = user_data.get('phone_number')
+        user_points = int(user_data.get('user_points', 0))
+        
         if not email and not phone_number:
-            return jsonify({"error": "At least one of email or phone_number is required"}), 400
+            raise HTTPException(status_code=400, detail="At least one of email or phone_number is required")
         
         user = User(
             unique_id=None,
@@ -52,104 +51,134 @@ def add_user_logic(data):
             credits=user_points
         )
 
-        user.save()
-        return {"message": "User added successfully", "user": user.to_dict()}, 201
+        user.save(db)
+        return {"message": "User added successfully", "user": user.to_dict()}
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def user_details(user_id):
+async def user_details(request: Request, user_id: str, db: Session):
     try:
-        user_ref = db.document(user_id)
-        user_doc = user_ref.get()
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
         
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            user_data['unique_id'] = user_id
-            return render_template("UserDetails.html", user=user_data)
-        return "User not found", 404
+        if user:
+            user_data = {
+                'unique_id': user.unique_id,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'email': user.email,
+                'phone_number': user.phone_number,
+                'role': user.role,
+                'credits': user.credits,
+                'balance': user.balance,
+                'referral_code': user.referral_code
+            }
+            return templates.TemplateResponse("UserDetails.html", {"request": request, "user": user_data})
+        raise HTTPException(status_code=404, detail="User not found")
+    except HTTPException:
+        raise
     except Exception as e:
-        return str(e), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-def update_user_points_logic(user_id, points):
+async def update_user_points_logic(user_id: str, points: int, db: Session):
     try:
-        user_ref = db.document(user_id)
-        user_ref.update({'credits': points})
-        return redirect(f"{os.getenv('ADMIN_PORTAL')}/user/{user_id}")
-    except Exception as e:
-        return str(e), 500
-
-
-def update_user_role_logic(user_id, new_role):
-    try:
-        db.document(user_id).update({'role': new_role})
-        return redirect(f"{os.getenv('ADMIN_PORTAL')}/user/{user_id}")
-    except Exception as e:
-        return str(e), 500
-
-def delete_user_logic(user_id):
-    try:
-        db.document(user_id).delete()
-        return jsonify({"message": "User deleted successfully"}), 200
-    except Exception as e:
-        return str(e), 500
-
-def get_user_transactions_logic(user_id):
-    try:
-        # Get user document
-        user_ref = db.document(user_id)
-        user_doc = user_ref.get()
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
         
-        if not user_doc.exists:
-            return jsonify({'transactions': []}), 200
+        user.credits = points
+        db.commit()
+        return RedirectResponse(url=f"{os.getenv('ADMIN_PORTAL')}/user/{user_id}", status_code=303)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def update_user_role_logic(user_id: str, new_role: str, db: Session):
+    try:
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user.role = new_role
+        db.commit()
+        return RedirectResponse(url=f"{os.getenv('ADMIN_PORTAL')}/user/{user_id}", status_code=303)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def delete_user_logic(user_id: str, db: Session):
+    try:
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        db.delete(user)
+        db.commit()
+        return {"message": "User deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_user_transactions_logic(user_id: str, db: Session):
+    try:
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
+        
+        if not user:
+            return {'transactions': []}
             
-        user_data = user_doc.to_dict()
-        transactions = user_data.get('transaction_history', [])
+        transactions = user.transaction_history or []
         
         # Sort transactions by timestamp in descending order
         transactions.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         
         print(f"Found {len(transactions)} transactions for user {user_id}")
-        return jsonify({'transactions': transactions}), 200
+        return {'transactions': transactions}
         
     except Exception as e:
         print(f"Error fetching transactions: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-def update_user_balance_logic(user_id, balance):
+async def update_user_balance_logic(user_id: str, balance: int, db: Session):
     try:
-        user_ref = db.document(user_id)
-        user_ref.update({'balance': balance})
-        return redirect(f"{os.getenv('ADMIN_PORTAL')}/user/{user_id}")
+        user = db.query(UserDB).filter(UserDB.unique_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user.balance = balance
+        db.commit()
+        return RedirectResponse(url=f"{os.getenv('ADMIN_PORTAL')}/user/{user_id}", status_code=303)
+    except HTTPException:
+        raise
     except Exception as e:
-        return str(e), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-def search_users():
-    query = request.args.get('query', '')
+async def search_users(request: Request, query: str, db: Session):
     print(f"Search query received: '{query}'")
 
     if not query or query.strip() == '':
         print("Empty query, returning all users")
-        return home()
+        return await home(request, db)
 
     query = query.lower().strip()
-    users = []
+    user_list = []
 
     try:
         print(f"Processing search for: '{query}'")
-        # Get all users first
-        all_docs = list(db.stream())
-        print(f"Total users in database: {len(all_docs)}")
+        all_users = db.query(UserDB).all()
+        print(f"Total users in database: {len(all_users)}")
 
-        for doc in all_docs:
-            user_data = doc.to_dict()
-            user_id = doc.id
-
+        for user in all_users:
             # Get the searchable fields
-            first_name = user_data.get('first_name', '').lower() if user_data.get('first_name') else ''
-            last_name = user_data.get('last_name', '').lower() if user_data.get('last_name') else ''
+            first_name = (user.first_name or '').lower()
+            last_name = (user.last_name or '').lower()
             full_name = f"{first_name} {last_name}".strip()
-            email = user_data.get('email', '').lower() if user_data.get('email') else ''
-            phone = user_data.get('phone_number', '').lower() if user_data.get('phone_number') else ''
+            email = (user.email or '').lower()
+            phone = (user.phone_number or '').lower()
+            user_id = user.unique_id.lower()
 
             print(f"Checking user - ID: {user_id}, Name: '{full_name}', Email: '{email}', Phone: '{phone}'")
 
@@ -164,20 +193,21 @@ def search_users():
             elif query in phone:
                 print(f"Match found in phone: '{phone}'")
                 found_match = True
-            elif query in user_id.lower():
+            elif query in user_id:
                 print(f"Match found in ID: '{user_id}'")
                 found_match = True
 
             if found_match:
-                # Format for display
-                user_data['id'] = user_id
-                user_data['name'] = f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip()
-                user_data['credits'] = user_data.get('credits', 0)
-                user_data['role'] = user_data.get('role', 'User')
-                users.append(user_data)
+                user_data = {
+                    'id': user.unique_id,
+                    'name': f"{user.first_name or ''} {user.last_name or ''}".strip(),
+                    'credits': user.credits or 0,
+                    'role': user.role or 'User'
+                }
+                user_list.append(user_data)
 
-        print(f"Search results: {len(users)} users found")
-        return render_template("HomePage.html", users=users, query=query)
+        print(f"Search results: {len(user_list)} users found")
+        return templates.TemplateResponse("HomePage.html", {"request": request, "users": user_list, "query": query})
     except Exception as e:
         print(f"Search error: {str(e)}")
-        return render_template("HomePage.html", users=[], query=query, error=str(e))
+        return templates.TemplateResponse("HomePage.html", {"request": request, "users": [], "query": query, "error": str(e)})

@@ -1,162 +1,163 @@
-from flask import request, jsonify
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 from models.role_model import Role
 from models.user_model import User
-from db import get_collection_reference, get_document_reference
+from models.database import UserDB, CacheDB
 import time
-def allocate_points():
-    try:
-        data = request.json
-        
-        # Extract the current user (who is allocating the points) and the target user
-        current_user_id = data.get('current_user_id')  # ID of the user calling the function
-        target_user_id = data.get('target_user_id')  # ID of the user receiving the points
-        points = int(data.get('points'))  # Number of points to allocate
 
-        # Fetch current user (the one performing the allocation)
-        current_user = User.get_by_id(current_user_id)
+async def allocate_points(points_data: dict, db: Session):
+    try:
+        # extract the current user (who is allocating the points) and the target user
+        current_user_id = points_data.get('current_user_id')
+        target_user_id = points_data.get('target_user_id')
+        points = int(points_data.get('points'))
+
+        # fetch current user (the one performing the allocation)
+        current_user = User.get_by_id(current_user_id, db)
 
         if not current_user:
-            return jsonify({"error": "Current user not found"}), 404
+            raise HTTPException(status_code=404, detail="Current user not found")
 
-        # Check if the current user has the proper role (SALES or ADMIN)
+        # check if the current user has the proper role (SALES or ADMIN)
         if current_user.role not in [Role.SALES, Role.ADMIN]:
-            return jsonify({"error": "Unauthorized: Only SALES or ADMIN can allocate points"}), 403
+            raise HTTPException(status_code=403, detail="Unauthorized: Only SALES or ADMIN can allocate points")
 
-        # Ensure the user is not allocating points to themselves
+        # ensure the user is not allocating points to themselves
         if current_user_id == target_user_id:
-            return jsonify({"error": "You cannot allocate points to yourself"}), 400
+            raise HTTPException(status_code=400, detail="You cannot allocate points to yourself")
 
-        # Fetch target user
-        target_user = User.get_by_id(target_user_id)
+        # fetch target user
+        target_user = User.get_by_id(target_user_id, db)
 
         if not target_user:
-            return jsonify({"error": "Target user not found"}), 404
+            raise HTTPException(status_code=404, detail="Target user not found")
         
         if current_user.role == Role.SALES:
             if current_user.balance < points:
-                return jsonify({"error": "Insufficient balance to allocate points"}), 400
+                raise HTTPException(status_code=400, detail="Insufficient balance to allocate points")
             current_user.balance -= points
-            current_user.save()
+            current_user.save(db)
 
-        # Allocate points to the target user
-        target_user.update_credits(points, "ALLOCATE", current_user_id)  # Add points to the target user
+        # allocate points to the target user
+        target_user.update_credits(points, "ALLOCATE", current_user_id, db)
 
-        return jsonify({"message": f"Points successfully allocated to user {target_user_id}"}), 200
+        return {"message": f"Points successfully allocated to user {target_user_id}"}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def redeem_points():
+async def redeem_points(redeem_data: dict, db: Session):
     try:
-        data = request.get_json()
-        
-        # Extract user ID and points to redeem
-        current_user_id = data.get('current_user_id')  # User redeeming the points
-        points = int(data.get('points'))  # Points to redeem
+        # extract user ID and points to redeem
+        current_user_id = redeem_data.get('current_user_id')
+        points = int(redeem_data.get('points'))
 
-        # Fetch user from the database
-        current_user = User.get_by_id(current_user_id)
+        # fetch user from the database
+        current_user = User.get_by_id(current_user_id, db)
 
         if not current_user:
-            return jsonify({"error": "User not found"}), 404
+            raise HTTPException(status_code=404, detail="User not found")
 
-        # Ensure the user has enough credits
+        # ensure the user has enough credits
         current_credits = current_user.get_current_credits()
         if current_credits < points:
-            return jsonify({"error": "Insufficient credits to redeem"}), 400
+            raise HTTPException(status_code=400, detail="Insufficient credits to redeem")
 
-        # Redeem the points (deduct them from user's credits)
-        current_user.update_credits(-points, "REDEEM", current_user_id)  # Deduct points
+        # redeem the points (deduct them from user's credits)
+        current_user.update_credits(-points, "REDEEM", current_user_id, db)
 
-        return jsonify({"message": "Points redeemed successfully"}), 200
+        return {"message": "Points redeemed successfully"}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def transaction_history():
+async def transaction_history(history_data: dict, db: Session):
     try:
-        data = request.get_json()
-        
-        # Extract user ID to fetch their transaction history
-        user_id = data.get('user_id')
+        # extract user ID to fetch their transaction history
+        user_id = history_data.get('user_id')
 
-        # Fetch user from the database
-        user = User.get_by_id(user_id)
+        # fetch user from the database
+        user = User.get_by_id(user_id, db)
 
         if not user:
-            return jsonify({"error": "User not found"}), 404
+            raise HTTPException(status_code=404, detail="User not found")
 
-        # Return the transaction history
-        return jsonify({"transaction_history": user.transaction_history}), 200
+        # return the transaction history
+        return {"transaction_history": user.transaction_history}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        raise HTTPException(status_code=400, detail=str(e))
 
-def leaderboard():
+async def leaderboard(limit: int, db: Session):
     try:
-        limit = min(request.args.get('limit', default=10, type=int), 50)
         current_time = int(time.time())
         
-        users_ref = get_collection_reference('users')
-        leaderboard_ref = get_document_reference('cache', 'leaderboard')
+        # check cache
+        cached_data = db.query(CacheDB).filter(CacheDB.key == 'leaderboard').first()
         
-        # Debug cache check
-        cached_data = leaderboard_ref.get()
-        
-        if cached_data.exists:
-            cache_dict = cached_data.to_dict()
-            last_updated = int(cache_dict.get('last_updated', 0))
+        if cached_data:
+            last_updated = cached_data.last_updated
             cache_age = current_time - last_updated
-            print(f"Cache age: {cache_age} seconds")  # Debug log
+            print(f"Cache age: {cache_age} seconds")
             
-            # Return cached data if less than 5 minutes old
-            if cache_age < 45:  # 45 seconds
-                leaderboard_data = cache_dict.get('rankings', [])[:limit]
-                print(f"Using cached data from {last_updated}")  # Debug log
-                return jsonify({
+            # return cached data if less than 45 seconds old
+            if cache_age < 45:
+                leaderboard_data = cached_data.value.get('rankings', [])[:limit]
+                print(f"Using cached data from {last_updated}")
+                return {
                     "data": leaderboard_data,
                     "count": len(leaderboard_data),
                     "cached": True,
                     "cache_age": cache_age
-                }), 200
+                }
         
         # Cache expired or doesn't exist, fetch fresh data
-        print("Fetching fresh leaderboard data")  # Debug log
-        query = users_ref.order_by('credits', direction='DESCENDING')\
-                        .order_by('__name__', direction='ASCENDING')\
-                        .limit(limit)
+        print("Fetching fresh leaderboard data")
+        users = db.query(UserDB).order_by(
+            UserDB.credits.desc(),
+            UserDB.unique_id.asc()
+        ).limit(limit).all()
         
-        users_snapshot = query.get(timeout=1)
         leaderboard_data = []
-        
-        for doc in users_snapshot:
-            doc_data = doc.to_dict()
-            if doc_data:
-                entry = {
-                    'id': doc.id,
-                    'name': f"{doc_data.get('first_name', '')} {doc_data.get('last_name', '')}".strip(),
-                    'credits': doc_data.get('credits', 0)
-                }
-                leaderboard_data.append(entry)
+        for user in users:
+            entry = {
+                'id': user.unique_id,
+                'name': f"{user.first_name or ''} {user.last_name or ''}".strip(),
+                'credits': user.credits or 0
+            }
+            leaderboard_data.append(entry)
         
         # Update cache with new data
         if leaderboard_data:
-            print(f"Updating cache at {current_time}")  # Debug log
-            leaderboard_ref.set({
-                'rankings': leaderboard_data,
-                'last_updated': current_time
-            })
+            print(f"Updating cache at {current_time}")
+            if cached_data:
+                cached_data.value = {'rankings': leaderboard_data}
+                cached_data.last_updated = current_time
+            else:
+                new_cache = CacheDB(
+                    key='leaderboard',
+                    value={'rankings': leaderboard_data},
+                    last_updated=current_time
+                )
+                db.add(new_cache)
+            db.commit()
         
-        return jsonify({
+        return {
             "data": leaderboard_data,
             "count": len(leaderboard_data),
             "cached": False,
             "updated_at": current_time
-        }), 200
+        }
 
     except Exception as e:
         print(f"Leaderboard Error: {str(e)}")
-        return jsonify({
-            "error": "Leaderboard temporarily unavailable",
-            "retry": True
-        }), 503
+        raise HTTPException(
+            status_code=503,
+            detail="Leaderboard temporarily unavailable"
+        )
