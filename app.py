@@ -10,6 +10,7 @@ from routes.user_routes import user_router
 from routes.auth_routes import auth_router
 from routes.website_routes import website_router
 from routes.data_routes import data_router
+from routes import leaderboard_routes
 
 ADMIN_PATH = os.getenv("ADMIN_PORTAL") or "/admin"
 
@@ -35,6 +36,7 @@ app.include_router(credit_router, tags=["credits"])
 app.include_router(user_router, prefix="/user", tags=["users"])
 app.include_router(auth_router, tags=["auth"])
 app.include_router(data_router, tags=["data"])
+app.include_router(leaderboard_routes.router)
 
 @app.get('/')
 async def home():
