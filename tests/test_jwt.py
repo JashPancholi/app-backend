@@ -4,35 +4,22 @@ import os
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
-# Assumes the new jwt.py file is at 'app.core.jwt'
-# Make sure this import path matches your project structure.
 from app.core.jwt import (
     create_access_token,
     create_refresh_token,
     verify_access_token,
     verify_refresh_token,
-    CredentialsException,  # Import the custom exception classes
+    CredentialsException, 
     TokenExpiredException,
     InvalidTokenException
 )
 
-# --- Test Constants ---
+#Test Constants
 TEST_USER_ID = "test-user-uuid-123"
 TEST_USER_ROLE = "USER"
 
-# --- Helper Variables ---
-# Use getenv with a default to match the logic in jwt.py
-SECRET_KEY = os.getenv("JWT_SECRET", "8587a92cc1278e23c46f6bc714b0eec6583e70d16f0da4aec7cafef662e40f9d")
+SECRET_KEY = os.getenv("JWT_SECRET", "add key for pytest")
 ALGORITHM = os.getenv("JWT_ALG", "HS256")
-
-if not SECRET_KEY:
-    print("Warning: JWT_SECRET is not set. Using a default for testing.")
-    # --- THIS IS THE FIX ---
-    # This key MUST match the default key in your jwt.py file
-    SECRET_KEY = "a-very-insecure-default-secret-key-for-dev"
-
-
-# --- Test Cases ---
 
 def test_create_and_verify_access_token():
     """Tests successful creation and verification of an access token."""

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from typing import Dict, Any
 
-SECRET_KEY = os.getenv("JWT_SECRET", "8587a92cc1278e23c46f6bc714b0eec6583e70d16f0da4aec7cafef662e40f9d")
+SECRET_KEY = os.getenv("JWT_SECRET", "add key for pytest")
 ALGORITHM = os.getenv("JWT_ALG", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MIN", 30))
 REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_REFRESH_TTL_MIN", 43200))
