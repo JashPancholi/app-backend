@@ -27,9 +27,6 @@ ADMIN_PHONE=optional_phone_number
 # OTP Service
 OTP_AUTH_TOKEN=your_otp_auth_token
 
-# Testing
-TEST_PHONE_NUMBER=7777777777
-TEST_OTP=123456
 TEST_DATABASE_URL=postgresql://username:password@host:port/test_database  # Optional, for separate test DB
 
 # Server
@@ -76,30 +73,6 @@ Or use the main script:
 ```bash
 python app.py
 ```
-
-## Testing
-
-Run all tests:
-```bash
-pytest tests/
-```
-
-Run specific test files:
-```bash
-pytest tests/test_users.py
-pytest tests/test_credits.py
-pytest tests/test_smoke.py
-```
-
-Run with verbose output:
-```bash
-pytest tests/ -v
-```
-
-The test suite includes:
-- **User CRUD tests** (`test_users.py`): 6 tests covering create, read, update, delete, list, and validation
-- **Credit system tests** (`test_credits.py`): Tests for atomic transactions, race conditions, double-spend prevention, and CSV export
-- **Smoke tests** (`test_smoke.py`): Basic endpoint availability checks
 
 ## API Endpoints
 
@@ -239,12 +212,6 @@ Export transaction history as CSV:
 ```bash
 curl "http://localhost:8000/history/{user_id}?format=csv" -o transactions.csv
 ```
-
-## Testing
-
-The application includes test phone number support:
-- Test phone: Set via `TEST_PHONE_NUMBER` env variable (default: 7777777777)
-- Test OTP: Set via `TEST_OTP` env variable (default: 123456)
 
 Use these for testing without sending actual SMS messages.
 
