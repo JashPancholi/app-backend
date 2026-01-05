@@ -115,3 +115,53 @@ async def get_profile(unique_id: str, db: Session):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+async def list_users(page: int = 1, limit: int = 10, db: Session = None):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database session not provided")
+    """List users with pagination"""
+    try:
+        if page < 1:
+            page = 1
+        if limit < 1 or limit > 100:
+            limit = 10
+        
+        # Calculate offset
+        offset = (page - 1) * limit
+        
+        # Get total count
+        total = db.query(UserDB).count()
+        
+        # Get paginated users
+        db_users = db.query(UserDB).offset(offset).limit(limit).all()
+        
+        users = []
+        for db_user in db_users:
+            user = User(
+                unique_id=db_user.unique_id,
+                first_name=db_user.first_name,
+                last_name=db_user.last_name,
+                email=db_user.email,
+                phone_number=db_user.phone_number,
+                is_user=db_user.role == "USER",
+                is_admin=db_user.role == "ADMIN",
+                is_sales=db_user.role == "SALES",
+                credits=db_user.credits,
+                transaction_history=db_user.transaction_history or [],
+                balance=db_user.balance or 0,
+                referral_code=db_user.referral_code,
+                referred_by=db_user.referred_by or []
+            )
+            users.append(user.to_dict())
+        
+        has_more = offset + limit < total
+        
+        return {
+            "users": users,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "has_more": has_more
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

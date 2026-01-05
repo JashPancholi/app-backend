@@ -10,7 +10,6 @@ from routes.user_routes import user_router
 from routes.auth_routes import auth_router
 from routes.website_routes import website_router
 from routes.data_routes import data_router
-from routes import leaderboard_routes
 
 ADMIN_PATH = os.getenv("ADMIN_PORTAL") or "/admin"
 
@@ -36,11 +35,36 @@ app.include_router(credit_router, tags=["credits"])
 app.include_router(user_router, prefix="/user", tags=["users"])
 app.include_router(auth_router, tags=["auth"])
 app.include_router(data_router, tags=["data"])
-app.include_router(leaderboard_routes.router)
+
+@app.get('/health')
+async def health():
+    """Health check endpoint"""
+    try:
+        # Check database connectivity
+        from db import SessionLocal
+        from sqlalchemy import text
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+        database_status = "connected"
+    except Exception:
+        database_status = "disconnected"
+    
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "database": database_status
+    }
 
 @app.get('/')
 async def home():
-    return RedirectResponse(url="https://taqneeqfest.com/")
+    """Root endpoint - returns API info"""
+    return {
+        "message": "Taqneeq Backend API",
+        "status": "running",
+        "docs": "http://localhost:8000/docs",
+        "version": "1.0.0"
+    }
 
 @app.get('/favicon.ico')
 @app.get('/robots.txt')

@@ -19,13 +19,15 @@ DATABASE_URL=postgresql://username:password@host:port/database
 # Admin
 ADMIN_PASSWORD=your_admin_password_base64
 ADMIN_PORTAL=/admin
+ADMIN_EMAIL=admin@example.com
+ADMIN_FIRST_NAME=Admin
+ADMIN_LAST_NAME=User
+ADMIN_PHONE=optional_phone_number
 
 # OTP Service
 OTP_AUTH_TOKEN=your_otp_auth_token
 
-# Testing
-TEST_PHONE_NUMBER=7777777777
-TEST_OTP=123456
+TEST_DATABASE_URL=postgresql://username:password@host:port/test_database  # Optional, for separate test DB
 
 # Server
 PORT=8000
@@ -48,6 +50,13 @@ To drop and recreate all tables (WARNING: This will delete all data):
 python init_db.py --drop
 ```
 
+3. Seed admin user (optional):
+```bash
+python scripts/seed_admin.py
+```
+
+This will create an admin user if one doesn't already exist, using the `ADMIN_EMAIL`, `ADMIN_FIRST_NAME`, `ADMIN_LAST_NAME`, and `ADMIN_PHONE` environment variables.
+
 ## Running the Application
 
 ### Development
@@ -67,6 +76,9 @@ python app.py
 
 ## API Endpoints
 
+### Health Check
+- `GET /health` - Health check endpoint returning status, version, and database connectivity
+
 ### Authentication
 - `POST /phone/auth` - Send verification code
 - `POST /phone/verify_code` - Verify OTP code
@@ -79,12 +91,21 @@ python app.py
 - `PUT /user/update` - Update user profile
 - `DELETE /user/delete` - Delete user profile
 - `GET /user/profile/{unique_id}` - Get user profile
+- `GET /user/list?page=1&limit=10` - List users with pagination
 
 ### Credits
-- `POST /points/allocate` - Allocate points to user
-- `POST /points/redeem` - Redeem points
-- `POST /transactions/history` - Get transaction history
-- `GET /leaderboard?limit=10` - Get leaderboard
+- `POST /points/allocate` - Allocate points to user (atomic transaction)
+- `POST /points/redeem` - Redeem points (atomic transaction with double-spend prevention)
+- `POST /transactions/history` - Get transaction history (backward compatibility)
+- `GET /history/{user_id}?page=1&limit=20&type=ALLOCATE&format=json` - Get transaction history with pagination and filtering
+  - Query parameters:
+    - `page`: Page number (default: 1)
+    - `limit`: Items per page (default: 20, max: 100)
+    - `transaction_type`: Filter by type (ALLOCATE or REDEEM)
+    - `start_date`: Start date filter (ISO format)
+    - `end_date`: End date filter (ISO format)
+    - `format`: Response format (`json` or `csv`)
+- `GET /leaderboard?limit=10` - Get leaderboard (with 45s TTL cache)
 
 ### Admin (Requires TOKEN header)
 - `GET /admin/users?sort=ascending` - Get all users
@@ -167,11 +188,30 @@ python app.py
 - psycopg2-binary
 - Pydantic
 
-## Testing
+## Transaction History
 
-The application includes test phone number support:
-- Test phone: Set via `TEST_PHONE_NUMBER` env variable (default: 7777777777)
-- Test OTP: Set via `TEST_OTP` env variable (default: 123456)
+Transaction history is stored in the `transaction_history` JSON column with the following structure:
+
+```json
+{
+  "transaction_id": "uuid",
+  "type": "ALLOCATE|REDEEM",
+  "points": 100,
+  "balance_before": 50,
+  "balance_after": 150,
+  "timestamp": "2024-01-01T12:00:00Z",
+  "action_user": "user_id",
+  "status": "SUCCESS|FAILED",
+  "metadata": {}
+}
+```
+
+### CSV Export Example
+
+Export transaction history as CSV:
+```bash
+curl "http://localhost:8000/history/{user_id}?format=csv" -o transactions.csv
+```
 
 Use these for testing without sending actual SMS messages.
 
