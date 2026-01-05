@@ -3,8 +3,15 @@ import jwt
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from typing import Dict, Any
+from jwt import ExpiredSignatureError, InvalidTokenError
+from dotenv import load_dotenv
 
-SECRET_KEY = os.getenv("JWT_SECRET", "add key for pytest")
+load_dotenv()
+
+SECRET_KEY = os.getenv("JWT_SECRET")
+if not SECRET_KEY:
+    raise ValueError("JWT_SECRET environment variable is not set")
+
 ALGORITHM = os.getenv("JWT_ALG", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MIN", 30))
 REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_REFRESH_TTL_MIN", 43200))
@@ -42,7 +49,7 @@ def create_access_token(user_id: str, role: str) -> str:
     to_encode = {
         "sub": user_id,
         "role": role,
-        "exp": expire,
+        "exp": int(expire.timestamp()),
         "type": "access"
     }
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -52,7 +59,7 @@ def create_refresh_token(user_id: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES)
     to_encode = {
         "sub": user_id,
-        "exp": expire,
+        "exp": int(expire.timestamp()),
         "type": "refresh"
     }
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -63,9 +70,9 @@ def _decode_token(token: str) -> Dict[str, Any]:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except jwt.ExpiredSignatureError:
+    except ExpiredSignatureError:
         raise TokenExpiredException()
-    except jwt.PyJWTError:
+    except InvalidTokenError:
         raise CredentialsException()
 
 def verify_access_token(token: str) -> Dict[str, Any]:

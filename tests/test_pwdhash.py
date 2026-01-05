@@ -1,5 +1,5 @@
 import pytest
-from app.core.security import get_password_hash, verify_password
+from src.core.security import get_password_hash, verify_password
 
 #checking if password can be hashed and verified
 def test_password_hashing_and_verification():
